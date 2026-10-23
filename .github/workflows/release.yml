@@ -43,8 +43,11 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           else
-            latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-            echo "tag=${latest}-build${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            latest=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "v0.0.0")
+            version=${latest#v}
+            IFS='.' read -r major minor patch <<< "$version"
+            patch=$((patch + 1))
+            echo "tag=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Release

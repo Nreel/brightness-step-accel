@@ -180,7 +180,8 @@ workflow in `.github/workflows/release.yml`, which builds the binary and
 AppImage on an Ubuntu runner and attaches both to a GitHub Release.
 
 - Tag pushes create a release named after the tag.
-- Pushes to `main` create a release tagged `build-<run_number>`.
+- Pushes to `main` automatically bump the patch version of the latest `v*`
+  tag and create a release for it (e.g. `v1.0.2`).
 
 ```bash
 git tag v1.0.0
