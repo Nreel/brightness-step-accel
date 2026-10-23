@@ -17,34 +17,20 @@ Wayland and does not depend on KDE, GNOME, or any desktop shortcut system.
 - Single daemon instance guarded by a lock file.
 - Standalone **AppImage** and **single-file binary** releases.
 
-## Requirements
-
-- Python 3 with `python-evdev` and `python-gobject` (GTK4 bindings).
-- `brightnessctl` **or** write access to `/sys/class/backlight/*/brightness`.
-- Membership in the `input` group for raw keyboard access.
-
-### CachyOS / Arch
-
-```bash
-sudo pacman -S python-evdev python-gobject brightnessctl
-sudo usermod -aG input "$USER"
-# Log out and back in so the group change takes effect.
-```
-
-### Debian / Ubuntu
-
-```bash
-sudo apt install python3-evdev python3-gi gir1.2-gtk-4.0 brightnessctl
-sudo usermod -aG input "$USER"
-# Log out and back in so the group change takes effect.
-```
-
 ## Installation
 
 ### AppImage (recommended for most users)
 
+**Requirements:** `brightnessctl` (or write access to
+`/sys/class/backlight/*/brightness`) and membership in the `input` group.
+
+```bash
+sudo usermod -aG input "$USER"
+# Log out and back in so the group change takes effect.
+```
+
 Download the latest `brightness-step-accel.AppImage` from the
-[Releases](https://github.com/nreel/brightness-step-accel/releases) page.
+[Releases](https://github.com/nreel/brightness-step-accel/releases) page, then:
 
 ```bash
 chmod +x brightness-step-accel.AppImage
@@ -53,7 +39,9 @@ chmod +x brightness-step-accel.AppImage
 
 ### Single-file binary
 
-Download `brightness-step-accel` from the Releases page.
+**Requirements:** same as the AppImage.
+
+Download `brightness-step-accel` from the Releases page, then:
 
 ```bash
 chmod +x brightness-step-accel
@@ -61,6 +49,28 @@ chmod +x brightness-step-accel
 ```
 
 ### From source
+
+**Requirements:** Python 3 with `python-evdev` and `python-gobject` (GTK4
+bindings), `brightnessctl` (or write access to
+`/sys/class/backlight/*/brightness`), and membership in the `input` group.
+
+#### CachyOS / Arch
+
+```bash
+sudo pacman -S python-evdev python-gobject brightnessctl
+sudo usermod -aG input "$USER"
+# Log out and back in so the group change takes effect.
+```
+
+#### Debian / Ubuntu
+
+```bash
+sudo apt install python3-evdev python3-gi gir1.2-gtk-4.0 brightnessctl
+sudo usermod -aG input "$USER"
+# Log out and back in so the group change takes effect.
+```
+
+Then clone and run:
 
 ```bash
 git clone https://github.com/nreel/brightness-step-accel.git
