@@ -128,9 +128,12 @@ python3 app.py --daemon   # run the daemon directly
 In the GUI:
 
 1. Adjust **Base step**, **Max step**, and **Rapid tap window**.
-2. Tick **Enable on startup** if you want the daemon to run at login.
-3. Click **Save & Restart**.
-4. Use **Stop** to stop the daemon. **Quit** closes the GUI and leaves the
+2. Tick **Accelerate while holding** if you want a held key to keep increasing
+   the step; untick it to make holding behave like a single tap.
+3. Use **Add to startup** / **Remove from startup** to manage the autostart
+   entry. The current state is shown below the buttons.
+4. Click **Save & Restart** to apply settings and restart the daemon.
+5. Use **Stop** to stop the daemon. **Quit** closes the GUI and leaves the
    daemon running (if started).
 
 ### Configuration file
@@ -141,13 +144,16 @@ Settings are stored in `~/.config/brightness-step-accel/config.json`:
 {
   "base_step": 2,
   "max_step": 20,
-  "window_ms": 200
+  "window_ms": 200,
+  "hold_accel": true
 }
 ```
 
 - `base_step`: percentage change for a single tap.
 - `max_step`: maximum percentage change when tapping rapidly.
 - `window_ms`: time window in milliseconds for counting rapid taps.
+- `hold_accel`: whether holding a brightness key keeps accelerating
+  (default `true`).
 
 ## Building
 
@@ -169,9 +175,12 @@ and the Python dependencies from `requirements.txt`. It also downloads
 
 ### Automated releases
 
-Pushing a tag matching `v*` triggers the GitHub Actions workflow in
-`.github/workflows/release.yml`, which builds the binary and AppImage on an
-Ubuntu runner and attaches both to a GitHub Release.
+Pushing to `main` or pushing a tag matching `v*` triggers the GitHub Actions
+workflow in `.github/workflows/release.yml`, which builds the binary and
+AppImage on an Ubuntu runner and attaches both to a GitHub Release.
+
+- Tag pushes create a release named after the tag.
+- Pushes to `main` create a release tagged `build-<run_number>`.
 
 ```bash
 git tag v1.0.0
@@ -184,13 +193,21 @@ The daemon grabs keyboards that expose brightness keys, swallows those key
 events, and forwards everything else to a virtual `uinput` device so the
 keyboard keeps working normally. For each press it measures the time since the
 last press of the same key. If the gap is within the configured window, the
-step grows; otherwise it resets to the base step. The resulting percentage is
-sent to `brightnessctl`, with a direct sysfs fallback.
+step grows; otherwise it resets to the base step. Hold state is tracked per
+device, so a key-up from one grabbed device cannot cancel a hold on another.
+
+When `hold_accel` is enabled, the daemon generates its own key repeats while a
+brightness key is held, because the grabbed devices do not expose `EV_REP`.
+On KDE, brightness changes are routed through the Solid PowerManagement DBus
+interface so the OSD and system slider stay in sync; otherwise the daemon falls
+back to `brightnessctl` and direct sysfs writes.
 
 ## Notes
 
-- Grabbing the device means the desktop's own brightness handler does not see
-  those keys. That is intentional — the app takes full control.
+- The daemon swallows the brightness key events so the desktop's own key
+  handler does not act on them. On KDE it then calls the desktop's brightness
+  DBus interface so the OSD and slider update; on other desktops it uses
+  `brightnessctl` or sysfs.
 - If no backlight device is writable, install `brightnessctl` or run the daemon
   with appropriate privileges.
 - The autostart entry uses the absolute path of `app.py`, so keep the file in a
