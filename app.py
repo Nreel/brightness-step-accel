@@ -282,37 +282,66 @@ def run_daemon():
 
     last_press = {UP_KEY: 0.0, DOWN_KEY: 0.0}
     press_count = {UP_KEY: 0, DOWN_KEY: 0}
+    held_key = None
+    repeat_due = 0.0
+    kernel_repeat = False
+    repeat_delay_ms = 400
+    repeat_interval_ms = 40
+
+    def _apply_press(code, is_repeat=False):
+        now = time.monotonic() * 1000.0
+        if not is_repeat and now - last_press[code] > config["window_ms"]:
+            press_count[code] = 0
+        press_count[code] += 1
+        last_press[code] = now
+        step = min(
+            config["base_step"] * press_count[code],
+            config["max_step"],
+        )
+        direction = 1 if code == UP_KEY else -1
+        change_brightness(step, direction)
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.write_text(str(os.getpid()))
 
     try:
         while running:
-            for key, _mask in selector.select(timeout=0.05):
+            now_ms = time.monotonic() * 1000.0
+            if held_key is not None and not kernel_repeat:
+                timeout = max(0.01, min(0.5, (repeat_due - now_ms) / 1000.0))
+            else:
+                timeout = 0.5
+            for key, _mask in selector.select(timeout=timeout):
                 dev = key.fileobj
                 virtual = dev_map[dev.path]
                 for event in dev.read():
                     if event.type == evdev.ecodes.EV_KEY and event.code in BRIGHTNESS_KEYS:
-                        # value 1 = key down, value 2 = key repeat
-                        if event.value in (1, 2):
-                            now = time.monotonic() * 1000.0
-                            code = event.code
-                            if now - last_press[code] > config["window_ms"]:
-                                press_count[code] = 0
-                            press_count[code] += 1
-                            last_press[code] = now
-                            step = min(
-                                config["base_step"] * press_count[code],
-                                config["max_step"],
-                            )
-                            direction = 1 if code == UP_KEY else -1
-                            change_brightness(step, direction)
+                        code = event.code
+                        # value 0 = key up, 1 = key down, 2 = key repeat
+                        if event.value == 1:
+                            _apply_press(code, is_repeat=False)
+                            held_key = code
+                            repeat_due = time.monotonic() * 1000.0 + repeat_delay_ms
+                            kernel_repeat = False
+                        elif event.value == 2:
+                            _apply_press(code, is_repeat=True)
+                            kernel_repeat = True
+                        elif event.value == 0:
+                            if held_key == code:
+                                held_key = None
+                                kernel_repeat = False
                         # Swallow the brightness key so the desktop does not also act.
                         continue
                     # Forward every other event so the keyboard keeps working.
                     # The physical device's EV_SYN event is forwarded too, so no
                     # explicit syn() call is required here.
                     virtual.write_event(event)
+            # Generate our own key repeat when the device does not.
+            if held_key is not None and not kernel_repeat:
+                now_ms = time.monotonic() * 1000.0
+                if now_ms >= repeat_due:
+                    _apply_press(held_key, is_repeat=True)
+                    repeat_due = now_ms + repeat_interval_ms
     except Exception as exc:
         print(f"Daemon error: {exc}", file=sys.stderr)
     finally:

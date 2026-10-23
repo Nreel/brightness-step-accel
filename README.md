@@ -68,6 +68,46 @@ cd brightness-step-accel
 python3 app.py            # open the GUI
 ```
 
+## Uninstallation
+
+Stop the daemon first (use **Stop** in the GUI, or send `SIGTERM` to the PID in
+`~/.config/brightness-step-accel/daemon.lock`):
+
+```bash
+kill "$(cat ~/.config/brightness-step-accel/daemon.lock)" 2>/dev/null
+```
+
+Then remove the autostart entry if **Enable on startup** was ticked:
+
+```bash
+rm -f ~/.config/autostart/brightness-step-accel.desktop
+```
+
+### AppImage
+
+```bash
+rm -f /path/to/brightness-step-accel.AppImage
+rm -rf ~/.config/brightness-step-accel
+```
+
+### Single-file binary
+
+```bash
+rm -f /path/to/brightness-step-accel
+rm -rf ~/.config/brightness-step-accel
+```
+
+### From source
+
+Remove the cloned directory (and its `.venv` if you ran `./build.sh`):
+
+```bash
+rm -rf /path/to/brightness-step-accel
+```
+
+System packages installed via `pacman` or `apt` are not removed automatically;
+uninstall them manually if no longer needed.
+
 ## Usage
 
 ```bash
