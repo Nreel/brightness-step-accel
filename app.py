@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""Brightness Step Accelerator.
+
+A small GTK4 GUI plus an evdev daemon that makes the brightness step grow when
+the brightness keys are tapped rapidly. Works on X11 and Wayland, independent of
+the desktop environment.
+
+Usage:
+    python3 app.py            # Open the configuration GUI
+    python3 app.py --daemon   # Run the background daemon
+"""
+
+import json
+import os
+import selectors
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import evdev
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk  # noqa: E402
+
+CONFIG_DIR = Path.home() / ".config" / "brightness-step-accel"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+LOCK_FILE = CONFIG_DIR / "daemon.lock"
+AUTOSTART_FILE = (
+    Path.home() / ".config" / "autostart" / "brightness-step-accel.desktop"
+)
+
+DEFAULT_CONFIG = {
+    "base_step": 2,
+    "max_step": 20,
+    "window_ms": 200,
+}
+
+UP_KEY = evdev.ecodes.KEY_BRIGHTNESSUP
+DOWN_KEY = evdev.ecodes.KEY_BRIGHTNESSDOWN
+BRIGHTNESS_KEYS = (UP_KEY, DOWN_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Configuration helpers
+# ---------------------------------------------------------------------------
+def load_config():
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return {**DEFAULT_CONFIG, **data}
+        except Exception:
+            pass
+    return DEFAULT_CONFIG.copy()
+
+
+def save_config(config):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Brightness backend
+# ---------------------------------------------------------------------------
+def _sysfs_brightness_path():
+    base = Path("/sys/class/backlight")
+    if not base.exists():
+        return None
+    for device in base.iterdir():
+        brightness = device / "brightness"
+        max_brightness = device / "max_brightness"
+        if brightness.exists() and max_brightness.exists():
+            return device
+    return None
+
+
+def _write_sysfs(device, delta_percent):
+    """Adjust brightness directly through sysfs. Requires write permission."""
+    max_brightness = int((device / "max_brightness").read_text().strip())
+    current = int((device / "brightness").read_text().strip())
+    delta = int(max_brightness * delta_percent / 100)
+    target = max(0, min(max_brightness, current + delta))
+    if target == current:
+        return False
+    try:
+        (device / "brightness").write_text(str(target))
+        return True
+    except PermissionError:
+        return False
+
+
+def change_brightness(step, direction):
+    """Increase or decrease brightness by ``step`` percent."""
+    delta = step if direction > 0 else -step
+
+    if shutil.which("brightnessctl"):
+        sign = "+" if direction > 0 else "-"
+        result = subprocess.run(
+            ["brightnessctl", "set", f"{step}%{sign}"],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return True
+
+    device = _sysfs_brightness_path()
+    if device and _write_sysfs(device, delta):
+        return True
+
+    # Last resort: try pkexec to write sysfs with elevated privileges.
+    if device and shutil.which("pkexec"):
+        max_brightness = int((device / "max_brightness").read_text().strip())
+        current = int((device / "brightness").read_text().strip())
+        delta = int(max_brightness * delta_percent / 100)
+        target = max(0, min(max_brightness, current + delta))
+        if target == current:
+            return True
+        script = f"echo {target} > {device}/brightness"
+        try:
+            result = subprocess.run(["pkexec", "sh", "-c", script], check=False)
+            return result.returncode == 0
+        except Exception:
+            pass
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Daemon
+# ---------------------------------------------------------------------------
+def find_devices():
+    devices = []
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+            caps = dev.capabilities(verbose=False)
+            keys = caps.get(evdev.ecodes.EV_KEY, [])
+            if UP_KEY in keys or DOWN_KEY in keys:
+                devices.append(dev)
+        except PermissionError:
+            pass
+        except Exception:
+            pass
+    return devices
+
+
+def _daemon_already_running():
+    if not LOCK_FILE.exists():
+        return False
+    try:
+        pid = int(LOCK_FILE.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError):
+        LOCK_FILE.unlink(missing_ok=True)
+        return False
+
+
+def run_daemon():
+    if _daemon_already_running():
+        print("Daemon already running.", file=sys.stderr)
+        sys.exit(0)
+
+    config = load_config()
+    devices = find_devices()
+    if not devices:
+        print(
+            "No keyboards with brightness keys found. "
+            "Ensure you are in the 'input' group and re-login.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    dev_map = {}
+    selector = selectors.DefaultSelector()
+    running = True
+
+    def _handle_signal(_signum, _frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    try:
+        for dev in devices:
+            dev.grab()
+            virtual = evdev.UInput.from_device(dev, name=f"accel-{dev.name}")
+            dev_map[dev.path] = virtual
+            selector.register(dev, selectors.EVENT_READ)
+    except PermissionError:
+        print(
+            "Permission denied while grabbing input devices. "
+            "Add your user to the 'input' group and re-login.",
+            file=sys.stderr,
+        )
+        for dev in dev_map:
+            try:
+                dev.ungrab()
+            except Exception:
+                pass
+        sys.exit(1)
+    except Exception as exc:
+        print(f"Failed to initialize devices: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    last_press = {UP_KEY: 0.0, DOWN_KEY: 0.0}
+    press_count = {UP_KEY: 0, DOWN_KEY: 0}
+
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOCK_FILE.write_text(str(os.getpid()))
+
+    try:
+        while running:
+            for key, _mask in selector.select(timeout=0.05):
+                dev = key.fileobj
+                virtual = dev_map[dev.path]
+                for event in dev.read():
+                    if event.type == evdev.ecodes.EV_KEY and event.code in BRIGHTNESS_KEYS:
+                        # value 1 = key down, value 2 = key repeat
+                        if event.value in (1, 2):
+                            now = time.monotonic() * 1000.0
+                            code = event.code
+                            if now - last_press[code] > config["window_ms"]:
+                                press_count[code] = 0
+                            press_count[code] += 1
+                            last_press[code] = now
+                            step = min(
+                                config["base_step"] * press_count[code],
+                                config["max_step"],
+                            )
+                            direction = 1 if code == UP_KEY else -1
+                            change_brightness(step, direction)
+                        # Swallow the brightness key so the desktop does not also act.
+                        continue
+                    # Forward every other event so the keyboard keeps working.
+                    # The physical device's EV_SYN event is forwarded too, so no
+                    # explicit syn() call is required here.
+                    virtual.write_event(event)
+    except Exception as exc:
+        print(f"Daemon error: {exc}", file=sys.stderr)
+    finally:
+        for dev in devices:
+            try:
+                dev.ungrab()
+            except Exception:
+                pass
+        for virtual in dev_map.values():
+            try:
+                virtual.close()
+            except Exception:
+                pass
+        selector.close()
+        LOCK_FILE.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# GUI
+# ---------------------------------------------------------------------------
+class AppWindow(Gtk.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app)
+        self.set_title("Brightness Step Accelerator")
+        self.set_default_size(420, 360)
+        self.config = load_config()
+        self._build_ui()
+
+    def _build_ui(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        outer.set_margin_top(12)
+        outer.set_margin_bottom(12)
+        outer.set_margin_start(12)
+        outer.set_margin_end(12)
+        self.set_child(outer)
+
+        frame = Gtk.Frame(label="Settings")
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        inner.set_margin_top(8)
+        inner.set_margin_bottom(8)
+        inner.set_margin_start(8)
+        inner.set_margin_end(8)
+        frame.set_child(inner)
+        outer.append(frame)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.append(Gtk.Label(label="Base step (%):", xalign=0, hexpand=True))
+        self.base_spin = Gtk.SpinButton.new_with_range(1, 10, 1)
+        self.base_spin.set_value(self.config["base_step"])
+        row.append(self.base_spin)
+        inner.append(row)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.append(Gtk.Label(label="Max step (%):", xalign=0, hexpand=True))
+        self.max_spin = Gtk.SpinButton.new_with_range(1, 50, 1)
+        self.max_spin.set_value(self.config["max_step"])
+        row.append(self.max_spin)
+        inner.append(row)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.append(Gtk.Label(label="Rapid tap window (ms):", xalign=0, hexpand=True))
+        self.window_spin = Gtk.SpinButton.new_with_range(50, 1000, 10)
+        self.window_spin.set_value(self.config["window_ms"])
+        row.append(self.window_spin)
+        inner.append(row)
+
+        self.autostart_check = Gtk.CheckButton(label="Enable on startup")
+        self.autostart_check.set_active(AUTOSTART_FILE.exists())
+        outer.append(self.autostart_check)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        save_btn = Gtk.Button(label="Save & Restart")
+        save_btn.connect("clicked", self._on_save)
+        stop_btn = Gtk.Button(label="Stop")
+        stop_btn.connect("clicked", self._on_stop)
+        quit_btn = Gtk.Button(label="Quit")
+        quit_btn.connect("clicked", self._on_quit)
+        buttons.append(save_btn)
+        buttons.append(stop_btn)
+        buttons.append(quit_btn)
+        outer.append(buttons)
+
+        self.status_label = Gtk.Label(label="Status: Stopped", xalign=0)
+        outer.append(self.status_label)
+
+        GLib.timeout_add(1000, self._update_status)
+
+    def _collect_config(self):
+        return {
+            "base_step": int(self.base_spin.get_value()),
+            "max_step": int(self.max_spin.get_value()),
+            "window_ms": int(self.window_spin.get_value()),
+        }
+
+    def _on_save(self, _btn):
+        self._stop_daemon()
+        config = self._collect_config()
+        save_config(config)
+        self._sync_autostart()
+        self._start_daemon()
+        self.status_label.set_text("Status: Running")
+
+    def _sync_autostart(self):
+        if self.autostart_check.get_active():
+            AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
+            AUTOSTART_FILE.write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=Brightness Step Accelerator\n"
+                f"Exec={sys.executable} {Path(__file__).resolve()} --daemon\n"
+                "Hidden=false\n"
+                "NoDisplay=false\n"
+                "X-GNOME-Autostart-enabled=true\n",
+                encoding="utf-8",
+            )
+        else:
+            AUTOSTART_FILE.unlink(missing_ok=True)
+
+    def _start_daemon(self):
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--daemon"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _stop_daemon(self):
+        if LOCK_FILE.exists():
+            try:
+                pid = int(LOCK_FILE.read_text().strip())
+                os.kill(pid, signal.SIGTERM)
+            except (ValueError, ProcessLookupError):
+                pass
+            for _ in range(20):
+                if not LOCK_FILE.exists():
+                    break
+                time.sleep(0.1)
+            LOCK_FILE.unlink(missing_ok=True)
+        self._update_status()
+
+    def _update_status(self):
+        if LOCK_FILE.exists():
+            try:
+                pid = int(LOCK_FILE.read_text().strip())
+                os.kill(pid, 0)
+                self.status_label.set_text("Status: Running")
+            except (ValueError, ProcessLookupError):
+                LOCK_FILE.unlink(missing_ok=True)
+                self.status_label.set_text("Status: Stopped")
+        else:
+            self.status_label.set_text("Status: Stopped")
+        return True
+
+    def _on_stop(self, _btn):
+        self._stop_daemon()
+
+    def _on_quit(self, _btn):
+        self.get_application().quit()
+
+
+class BrightnessApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.github.brightness_step_accel")
+
+    def do_activate(self):
+        win = self.get_active_window()
+        if not win:
+            win = AppWindow(self)
+            win.present()
+
+
+def main():
+    if "--daemon" in sys.argv:
+        run_daemon()
+    else:
+        app = BrightnessApp()
+        sys.exit(app.run(sys.argv))
+
+
+if __name__ == "__main__":
+    main()
