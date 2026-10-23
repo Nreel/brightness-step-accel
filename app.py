@@ -283,9 +283,7 @@ def run_daemon():
 
     last_press = {UP_KEY: 0.0, DOWN_KEY: 0.0}
     press_count = {UP_KEY: 0, DOWN_KEY: 0}
-    held_key = None
-    repeat_due = 0.0
-    kernel_repeat = False
+    held = {}  # (dev.path, code) -> {"due": ms, "kernel_repeat": bool}
     repeat_delay_ms = 400
     repeat_interval_ms = 40
     hold_accel = config.get("hold_accel", True)
@@ -309,8 +307,12 @@ def run_daemon():
     try:
         while running:
             now_ms = time.monotonic() * 1000.0
-            if held_key is not None and not kernel_repeat:
-                timeout = max(0.01, min(0.5, (repeat_due - now_ms) / 1000.0))
+            next_due = min(
+                (state["due"] for state in held.values() if not state["kernel_repeat"]),
+                default=None,
+            )
+            if next_due is not None:
+                timeout = max(0.01, min(0.5, (next_due - now_ms) / 1000.0))
             else:
                 timeout = 0.5
             for key, _mask in selector.select(timeout=timeout):
@@ -323,17 +325,18 @@ def run_daemon():
                         if event.value == 1:
                             _apply_press(code, is_repeat=False)
                             if hold_accel:
-                                held_key = code
-                                repeat_due = time.monotonic() * 1000.0 + repeat_delay_ms
-                                kernel_repeat = False
+                                held[(dev.path, code)] = {
+                                    "due": time.monotonic() * 1000.0 + repeat_delay_ms,
+                                    "kernel_repeat": False,
+                                }
                         elif event.value == 2:
                             if hold_accel:
                                 _apply_press(code, is_repeat=True)
-                                kernel_repeat = True
+                                key_tuple = (dev.path, code)
+                                if key_tuple in held:
+                                    held[key_tuple]["kernel_repeat"] = True
                         elif event.value == 0:
-                            if held_key == code:
-                                held_key = None
-                                kernel_repeat = False
+                            held.pop((dev.path, code), None)
                         # Swallow the brightness key so the desktop does not also act.
                         continue
                     # Forward every other event so the keyboard keeps working.
@@ -341,11 +344,13 @@ def run_daemon():
                     # explicit syn() call is required here.
                     virtual.write_event(event)
             # Generate our own key repeat when the device does not.
-            if held_key is not None and not kernel_repeat:
-                now_ms = time.monotonic() * 1000.0
-                if now_ms >= repeat_due:
-                    _apply_press(held_key, is_repeat=True)
-                    repeat_due = now_ms + repeat_interval_ms
+            now_ms = time.monotonic() * 1000.0
+            for key_tuple, state in list(held.items()):
+                if state["kernel_repeat"]:
+                    continue
+                if now_ms >= state["due"]:
+                    _apply_press(key_tuple[1], is_repeat=True)
+                    state["due"] = now_ms + repeat_interval_ms
     except Exception as exc:
         print(f"Daemon error: {exc}", file=sys.stderr)
     finally:
