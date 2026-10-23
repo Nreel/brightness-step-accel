@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -35,10 +37,20 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            echo "tag=${latest}-build${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+          tag_name: ${{ steps.version.outputs.tag }}
           files: |
             dist/brightness-step-accel
             dist/brightness-step-accel.AppImage
