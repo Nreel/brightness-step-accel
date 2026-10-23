@@ -38,6 +38,7 @@ DEFAULT_CONFIG = {
     "base_step": 2,
     "max_step": 20,
     "window_ms": 200,
+    "hold_accel": True,
 }
 
 UP_KEY = evdev.ecodes.KEY_BRIGHTNESSUP
@@ -287,6 +288,7 @@ def run_daemon():
     kernel_repeat = False
     repeat_delay_ms = 400
     repeat_interval_ms = 40
+    hold_accel = config.get("hold_accel", True)
 
     def _apply_press(code, is_repeat=False):
         now = time.monotonic() * 1000.0
@@ -320,12 +322,14 @@ def run_daemon():
                         # value 0 = key up, 1 = key down, 2 = key repeat
                         if event.value == 1:
                             _apply_press(code, is_repeat=False)
-                            held_key = code
-                            repeat_due = time.monotonic() * 1000.0 + repeat_delay_ms
-                            kernel_repeat = False
+                            if hold_accel:
+                                held_key = code
+                                repeat_due = time.monotonic() * 1000.0 + repeat_delay_ms
+                                kernel_repeat = False
                         elif event.value == 2:
-                            _apply_press(code, is_repeat=True)
-                            kernel_repeat = True
+                            if hold_accel:
+                                _apply_press(code, is_repeat=True)
+                                kernel_repeat = True
                         elif event.value == 0:
                             if held_key == code:
                                 held_key = None
@@ -408,9 +412,22 @@ class AppWindow(Gtk.ApplicationWindow):
         row.append(self.window_spin)
         inner.append(row)
 
-        self.autostart_check = Gtk.CheckButton(label="Enable on startup")
-        self.autostart_check.set_active(AUTOSTART_FILE.exists())
-        outer.append(self.autostart_check)
+        self.hold_check = Gtk.CheckButton(label="Accelerate while holding")
+        self.hold_check.set_active(self.config.get("hold_accel", True))
+        outer.append(self.hold_check)
+
+        autostart_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        add_btn = Gtk.Button(label="Add to startup")
+        add_btn.connect("clicked", self._on_add_autostart)
+        remove_btn = Gtk.Button(label="Remove from startup")
+        remove_btn.connect("clicked", self._on_remove_autostart)
+        autostart_box.append(add_btn)
+        autostart_box.append(remove_btn)
+        outer.append(autostart_box)
+
+        self.autostart_status = Gtk.Label(xalign=0)
+        outer.append(self.autostart_status)
+        self._update_autostart_status()
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         save_btn = Gtk.Button(label="Save & Restart")
@@ -434,31 +451,40 @@ class AppWindow(Gtk.ApplicationWindow):
             "base_step": int(self.base_spin.get_value()),
             "max_step": int(self.max_spin.get_value()),
             "window_ms": int(self.window_spin.get_value()),
+            "hold_accel": self.hold_check.get_active(),
         }
 
     def _on_save(self, _btn):
         self._stop_daemon()
         config = self._collect_config()
         save_config(config)
-        self._sync_autostart()
+        self._update_autostart_status()
         self._start_daemon()
         self.status_label.set_text("Status: Running")
 
-    def _sync_autostart(self):
-        if self.autostart_check.get_active():
-            AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
-            AUTOSTART_FILE.write_text(
-                "[Desktop Entry]\n"
-                "Type=Application\n"
-                "Name=Brightness Step Accelerator\n"
-                f"Exec={sys.executable} {Path(__file__).resolve()} --daemon\n"
-                "Hidden=false\n"
-                "NoDisplay=false\n"
-                "X-GNOME-Autostart-enabled=true\n",
-                encoding="utf-8",
-            )
+    def _update_autostart_status(self):
+        if AUTOSTART_FILE.exists():
+            self.autostart_status.set_text("Startup: enabled")
         else:
-            AUTOSTART_FILE.unlink(missing_ok=True)
+            self.autostart_status.set_text("Startup: disabled")
+
+    def _on_add_autostart(self, _btn):
+        AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
+        AUTOSTART_FILE.write_text(
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Brightness Step Accelerator\n"
+            f"Exec={sys.executable} {Path(__file__).resolve()} --daemon\n"
+            "Hidden=false\n"
+            "NoDisplay=false\n"
+            "X-GNOME-Autostart-enabled=true\n",
+            encoding="utf-8",
+        )
+        self._update_autostart_status()
+
+    def _on_remove_autostart(self, _btn):
+        AUTOSTART_FILE.unlink(missing_ok=True)
+        self._update_autostart_status()
 
     def _start_daemon(self):
         subprocess.Popen(
