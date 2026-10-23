@@ -6,8 +6,10 @@ cd "$(dirname "$0")"
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv --system-site-packages .venv
-    .venv/bin/pip install pyinstaller
 fi
+
+echo "Installing Python build dependencies..."
+.venv/bin/pip install pyinstaller -r requirements.txt
 
 if [ ! -f "build_tools/appimagetool" ]; then
     echo "Downloading appimagetool..."

@@ -113,7 +113,8 @@ Artifacts are written to `dist/`:
 - `dist/brightness-step-accel.AppImage` — portable AppImage.
 
 The script creates a virtual environment with `--system-site-packages` so
-PyInstaller can find the system `gi` (GTK) bindings. It also downloads
+PyInstaller can find the system `gi` (GTK) bindings, then installs PyInstaller
+and the Python dependencies from `requirements.txt`. It also downloads
 `appimagetool` into `build_tools/` if it is not present.
 
 ### Automated releases

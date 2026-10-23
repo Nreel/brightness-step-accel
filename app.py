@@ -95,9 +95,75 @@ def _write_sysfs(device, delta_percent):
         return False
 
 
+KDE_BRIGHTNESS_SERVICE = "org.kde.Solid.PowerManagement"
+KDE_BRIGHTNESS_OBJECT = "/org/kde/Solid/PowerManagement/Actions/BrightnessControl"
+KDE_BRIGHTNESS_INTERFACE = "org.kde.Solid.PowerManagement.Actions.BrightnessControl"
+
+
+def _kde_busctl_call(method, signature=None, *args):
+    """Call a method on KDE's brightness DBus interface via busctl.
+
+    Returns an int for getters, ``True`` for successful setters, or ``None``.
+    """
+    if not shutil.which("busctl"):
+        return None
+    cmd = [
+        "busctl", "--user", "call",
+        KDE_BRIGHTNESS_SERVICE,
+        KDE_BRIGHTNESS_OBJECT,
+        KDE_BRIGHTNESS_INTERFACE,
+        method,
+    ]
+    if signature:
+        cmd.append(signature)
+        cmd.extend(str(a) for a in args)
+    try:
+        result = subprocess.run(
+            cmd, check=False, capture_output=True, text=True, timeout=2,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    if signature:
+        return True
+    try:
+        return int(result.stdout.strip().split()[-1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _kde_get_brightness():
+    """Return ``(current, minimum, maximum)`` from KDE, or ``None``."""
+    current = _kde_busctl_call("brightness")
+    if current is None:
+        return None
+    minimum = _kde_busctl_call("brightnessMin")
+    if minimum is None:
+        minimum = 0
+    maximum = _kde_busctl_call("brightnessMax")
+    if maximum is None:
+        return None
+    return current, minimum, maximum
+
+
+def _kde_set_brightness(value):
+    """Set absolute brightness through KDE's DBus interface."""
+    return _kde_busctl_call("setBrightness", "i", value) is True
+
+
 def change_brightness(step, direction):
     """Increase or decrease brightness by ``step`` percent."""
     delta = step if direction > 0 else -step
+
+    # Prefer KDE's own brightness control so its OSD and slider stay in sync.
+    state = _kde_get_brightness()
+    if state is not None:
+        current, minimum, maximum = state
+        delta_abs = int(maximum * delta / 100)
+        target = max(minimum, min(maximum, current + delta_abs))
+        if target != current and _kde_set_brightness(target):
+            return True
 
     if shutil.which("brightnessctl"):
         sign = "+" if direction > 0 else "-"
@@ -117,8 +183,8 @@ def change_brightness(step, direction):
     if device and shutil.which("pkexec"):
         max_brightness = int((device / "max_brightness").read_text().strip())
         current = int((device / "brightness").read_text().strip())
-        delta = int(max_brightness * delta_percent / 100)
-        target = max(0, min(max_brightness, current + delta))
+        delta_abs = int(max_brightness * delta / 100)
+        target = max(0, min(max_brightness, current + delta_abs))
         if target == current:
             return True
         script = f"echo {target} > {device}/brightness"
@@ -139,6 +205,10 @@ def find_devices():
     for path in evdev.list_devices():
         try:
             dev = evdev.InputDevice(path)
+            # Skip virtual devices this daemon creates, otherwise a restart
+            # while stale devices exist would grab its own output.
+            if dev.name.startswith("accel-"):
+                continue
             caps = dev.capabilities(verbose=False)
             keys = caps.get(evdev.ecodes.EV_KEY, [])
             if UP_KEY in keys or DOWN_KEY in keys:
