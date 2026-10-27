@@ -211,6 +211,8 @@ back to `brightnessctl` and direct sysfs writes.
   `brightnessctl` or sysfs.
 - If no backlight device is writable, install `brightnessctl` or run the daemon
   with appropriate privileges.
-- The autostart entry uses the absolute path of `app.py`, so keep the file in a
-  stable location if you rely on startup.
+- The autostart entry uses the absolute path of the running executable: the
+  AppImage or standalone binary when running a release, or `app.py` when
+  running from source. Keep the executable in a stable location if you rely
+  on startup.
 - The AppImage and binary are built for x86_64.

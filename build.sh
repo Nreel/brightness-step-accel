@@ -3,13 +3,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+if [ -d ".venv" ] && ! .venv/bin/pip --version >/dev/null 2>&1; then
+    echo "Existing virtual environment is broken; recreating..."
+    rm -rf .venv
+fi
+
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv --system-site-packages .venv
 fi
 
 echo "Installing Python build dependencies..."
-.venv/bin/pip install pyinstaller -r requirements.txt
+.venv/bin/python3 -m pip install pyinstaller -r requirements.txt
 
 if [ ! -f "build_tools/appimagetool" ]; then
     echo "Downloading appimagetool..."
@@ -20,7 +25,7 @@ if [ ! -f "build_tools/appimagetool" ]; then
 fi
 
 echo "Building standalone binary..."
-.venv/bin/pyinstaller --onefile --windowed --name fn-keys-accel app.py
+.venv/bin/python3 -m PyInstaller --onefile --windowed --name fn-keys-accel app.py
 
 echo "Building AppImage..."
 rm -rf AppDir

@@ -72,6 +72,29 @@ def save_config(config):
         json.dump(config, fh, indent=2)
 
 
+def _get_exec_command():
+    """Return the command list that launches this application."""
+    if getattr(sys, "frozen", False):
+        # PyInstaller bundle or AppImage. Prefer the original AppImage path so
+        # autostart entries survive the temporary mount being unmounted.
+        appimage = os.environ.get("APPIMAGE")
+        if appimage:
+            return [appimage]
+        return [sys.executable]
+    # Running from source.
+    return [sys.executable, str(Path(__file__).resolve())]
+
+
+def _quote_exec_arg(arg):
+    """Quote an argument for a desktop entry's Exec key."""
+    if not arg:
+        return '""'
+    if " " in arg or "\t" in arg or '"' in arg or "\\" in arg:
+        escaped = arg.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return arg
+
+
 # ---------------------------------------------------------------------------
 # Brightness backend
 # ---------------------------------------------------------------------------
@@ -526,18 +549,36 @@ class AppWindow(Gtk.ApplicationWindow):
         self.status_label.set_text("Status: Running")
 
     def _update_autostart_status(self):
-        if AUTOSTART_FILE.exists():
-            self.autostart_status.set_text("Startup: enabled")
-        else:
+        if not AUTOSTART_FILE.exists():
             self.autostart_status.set_text("Startup: disabled")
+            return
+        try:
+            text = AUTOSTART_FILE.read_text(encoding="utf-8")
+            exec_path = None
+            for line in text.splitlines():
+                if line.startswith("Exec="):
+                    value = line[len("Exec="):].strip()
+                    if value.startswith('"'):
+                        end = value.find('"', 1)
+                        exec_path = value[1:end] if end != -1 else value[1:]
+                    elif value:
+                        exec_path = value.split()[0]
+                    break
+            if exec_path and (os.path.exists(exec_path) or shutil.which(exec_path)):
+                self.autostart_status.set_text("Startup: enabled")
+            else:
+                self.autostart_status.set_text("Startup: broken (re-add to fix)")
+        except Exception:
+            self.autostart_status.set_text("Startup: enabled")
 
     def _on_add_autostart(self, _btn):
         AUTOSTART_FILE.parent.mkdir(parents=True, exist_ok=True)
+        exec_cmd = " ".join(_quote_exec_arg(arg) for arg in _get_exec_command())
         AUTOSTART_FILE.write_text(
             "[Desktop Entry]\n"
             "Type=Application\n"
             "Name=Fn Keys Accel\n"
-            f"Exec={sys.executable} {Path(__file__).resolve()} --daemon\n"
+            f"Exec={exec_cmd} --daemon\n"
             "Hidden=false\n"
             "NoDisplay=false\n"
             "X-GNOME-Autostart-enabled=true\n",
@@ -551,7 +592,7 @@ class AppWindow(Gtk.ApplicationWindow):
 
     def _start_daemon(self):
         subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "--daemon"],
+            _get_exec_command() + ["--daemon"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
