@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Fn Keys Accel
+Comment=Increase brightness and volume step size when tapping keys rapidly
+Exec=fn-keys-accel
+Icon=fn-keys-accel
+Categories=Utility;
+Terminal=false

@@ -20,7 +20,7 @@ if [ ! -f "build_tools/appimagetool" ]; then
 fi
 
 echo "Building standalone binary..."
-.venv/bin/pyinstaller --onefile --windowed --name brightness-step-accel app.py
+.venv/bin/pyinstaller --onefile --windowed --name fn-keys-accel app.py
 
 echo "Building AppImage..."
 rm -rf AppDir
@@ -30,48 +30,48 @@ mkdir -p \
     AppDir/usr/share/icons/hicolor/scalable/apps \
     AppDir/usr/share/metainfo
 
-cp dist/brightness-step-accel AppDir/usr/bin/
+cp dist/fn-keys-accel AppDir/usr/bin/
 
 # appimagetool expects the desktop file and icon in the AppDir root.
-cp brightness-step-accel.desktop AppDir/
-cp brightness-step-accel.desktop AppDir/usr/share/applications/
-cp brightness-step-accel.svg AppDir/
-cp brightness-step-accel.svg AppDir/usr/share/icons/hicolor/scalable/apps/
+cp fn-keys-accel.desktop AppDir/
+cp fn-keys-accel.desktop AppDir/usr/share/applications/
+cp fn-keys-accel.svg AppDir/
+cp fn-keys-accel.svg AppDir/usr/share/icons/hicolor/scalable/apps/
 
 cat > AppDir/AppRun << 'EOF'
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
-exec "${HERE}/usr/bin/brightness-step-accel" "$@"
+exec "${HERE}/usr/bin/fn-keys-accel" "$@"
 EOF
 chmod +x AppDir/AppRun
 
-cat > AppDir/usr/share/metainfo/org.github.brightness_step_accel.appdata.xml << 'EOF'
+cat > AppDir/usr/share/metainfo/org.github.fn_keys_accel.appdata.xml << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.github.brightness_step_accel</id>
+  <id>org.github.fn_keys_accel</id>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
-  <name>Brightness Step Accelerator</name>
+  <name>Fn Keys Accel</name>
   <summary>Increase brightness step size when tapping brightness keys rapidly</summary>
   <description>
-    <p>Brightness Step Accelerator is a small GTK4 application for Linux that makes the brightness step grow when the brightness keys are tapped rapidly, similar to the Windows behaviour.</p>
+    <p>Fn Keys Accel is a small GTK4 application for Linux that makes the brightness step grow when the brightness keys are tapped rapidly, similar to the Windows behaviour.</p>
   </description>
   <categories>
     <category>Utility</category>
   </categories>
-  <url type="homepage">https://github.com/nreel/brightness-step-accel</url>
-  <launchable type="desktop-id">brightness-step-accel.desktop</launchable>
+  <url type="homepage">https://github.com/nreel/fn-keys-accel</url>
+  <launchable type="desktop-id">fn-keys-accel.desktop</launchable>
   <content_rating type="oars-1.1"/>
   <developer id="org.github">
-    <name>Brightness Step Accelerator Contributors</name>
+    <name>Fn Keys Accel Contributors</name>
   </developer>
 </component>
 EOF
 
 chmod +x build_tools/appimagetool
-ARCH=x86_64 ./build_tools/appimagetool AppDir dist/brightness-step-accel.AppImage
+ARCH=x86_64 ./build_tools/appimagetool AppDir dist/fn-keys-accel.AppImage
 
 echo ""
 echo "Build complete:"
-echo "  Binary:   dist/brightness-step-accel"
-echo "  AppImage: dist/brightness-step-accel.AppImage"
+echo "  Binary:   dist/fn-keys-accel"
+echo "  AppImage: dist/fn-keys-accel.AppImage"

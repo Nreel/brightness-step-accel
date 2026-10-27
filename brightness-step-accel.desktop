@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Brightness Step Accelerator
-Comment=Increase brightness step size when tapping brightness keys rapidly
-Exec=brightness-step-accel
-Icon=brightness-step-accel
-Categories=Utility;
-Terminal=false

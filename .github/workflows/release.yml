@@ -55,7 +55,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           files: |
-            dist/brightness-step-accel
-            dist/brightness-step-accel.AppImage
+            dist/fn-keys-accel
+            dist/fn-keys-accel.AppImage
           draft: false
           prerelease: false

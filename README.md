@@ -1,7 +1,7 @@
-# Brightness Step Accelerator
+# Fn Keys Accel
 
-A small GTK4 application for Linux that makes the brightness step grow when the
-brightness keys are tapped rapidly — similar to the Windows behaviour where
+A small GTK4 application for Linux that makes the brightness and volume steps grow when the
+brightness and volume keys are tapped rapidly — similar to the Windows behaviour where
 faster clicking gives a bigger step.
 
 It listens directly to the raw `evdev` input layer, so it works on X11 and
@@ -29,23 +29,23 @@ sudo usermod -aG input "$USER"
 # Log out and back in so the group change takes effect.
 ```
 
-Download the latest `brightness-step-accel.AppImage` from the
-[Releases](https://github.com/nreel/brightness-step-accel/releases) page, then:
+Download the latest `fn-keys-accel.AppImage` from the
+[Releases](https://github.com/nreel/fn-keys-accel/releases) page, then:
 
 ```bash
-chmod +x brightness-step-accel.AppImage
-./brightness-step-accel.AppImage
+chmod +x fn-keys-accel.AppImage
+./fn-keys-accel.AppImage
 ```
 
 ### Single-file binary
 
 **Requirements:** same as the AppImage.
 
-Download `brightness-step-accel` from the Releases page, then:
+Download `fn-keys-accel` from the Releases page, then:
 
 ```bash
-chmod +x brightness-step-accel
-./brightness-step-accel
+chmod +x fn-keys-accel
+./fn-keys-accel
 ```
 
 ### From source
@@ -73,38 +73,38 @@ sudo usermod -aG input "$USER"
 Then clone and run:
 
 ```bash
-git clone https://github.com/nreel/brightness-step-accel.git
-cd brightness-step-accel
+git clone https://github.com/nreel/fn-keys-accel.git
+cd fn-keys-accel
 python3 app.py            # open the GUI
 ```
 
 ## Uninstallation
 
 Stop the daemon first (use **Stop** in the GUI, or send `SIGTERM` to the PID in
-`~/.config/brightness-step-accel/daemon.lock`):
+`~/.config/fn-keys-accel/daemon.lock`):
 
 ```bash
-kill "$(cat ~/.config/brightness-step-accel/daemon.lock)" 2>/dev/null
+kill "$(cat ~/.config/fn-keys-accel/daemon.lock)" 2>/dev/null
 ```
 
 Then remove the autostart entry if **Enable on startup** was ticked:
 
 ```bash
-rm -f ~/.config/autostart/brightness-step-accel.desktop
+rm -f ~/.config/autostart/fn-keys-accel.desktop
 ```
 
 ### AppImage
 
 ```bash
-rm -f /path/to/brightness-step-accel.AppImage
-rm -rf ~/.config/brightness-step-accel
+rm -f /path/to/fn-keys-accel.AppImage
+rm -rf ~/.config/fn-keys-accel
 ```
 
 ### Single-file binary
 
 ```bash
-rm -f /path/to/brightness-step-accel
-rm -rf ~/.config/brightness-step-accel
+rm -f /path/to/fn-keys-accel
+rm -rf ~/.config/fn-keys-accel
 ```
 
 ### From source
@@ -112,7 +112,7 @@ rm -rf ~/.config/brightness-step-accel
 Remove the cloned directory (and its `.venv` if you ran `./build.sh`):
 
 ```bash
-rm -rf /path/to/brightness-step-accel
+rm -rf /path/to/fn-keys-accel
 ```
 
 System packages installed via `pacman` or `apt` are not removed automatically;
@@ -138,7 +138,7 @@ In the GUI:
 
 ### Configuration file
 
-Settings are stored in `~/.config/brightness-step-accel/config.json`:
+Settings are stored in `~/.config/fn-keys-accel/config.json`:
 
 ```json
 {
@@ -165,8 +165,8 @@ The build script creates both a standalone binary and an AppImage:
 
 Artifacts are written to `dist/`:
 
-- `dist/brightness-step-accel` — standalone binary.
-- `dist/brightness-step-accel.AppImage` — portable AppImage.
+- `dist/fn-keys-accel` — standalone binary.
+- `dist/fn-keys-accel.AppImage` — portable AppImage.
 
 The script creates a virtual environment with `--system-site-packages` so
 PyInstaller can find the system `gi` (GTK) bindings, then installs PyInstaller

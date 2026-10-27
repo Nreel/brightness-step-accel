@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Brightness Step Accelerator.
+"""Fn Keys Accel.
 
 A small GTK4 GUI plus an evdev daemon that makes the brightness step grow when
 the brightness keys are tapped rapidly. Works on X11 and Wayland, independent of
@@ -27,11 +27,11 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
-CONFIG_DIR = Path.home() / ".config" / "brightness-step-accel"
+CONFIG_DIR = Path.home() / ".config" / "fn-keys-accel"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LOCK_FILE = CONFIG_DIR / "daemon.lock"
 AUTOSTART_FILE = (
-    Path.home() / ".config" / "autostart" / "brightness-step-accel.desktop"
+    Path.home() / ".config" / "autostart" / "fn-keys-accel.desktop"
 )
 
 DEFAULT_CONFIG = {
@@ -39,11 +39,17 @@ DEFAULT_CONFIG = {
     "max_step": 20,
     "window_ms": 200,
     "hold_accel": True,
+    "brightness_acceleration": True,
+    "sound_acceleration": False,
 }
 
 UP_KEY = evdev.ecodes.KEY_BRIGHTNESSUP
 DOWN_KEY = evdev.ecodes.KEY_BRIGHTNESSDOWN
 BRIGHTNESS_KEYS = (UP_KEY, DOWN_KEY)
+
+VOLUME_UP_KEY = evdev.ecodes.KEY_VOLUMEUP
+VOLUME_DOWN_KEY = evdev.ecodes.KEY_VOLUMEDOWN
+SOUND_KEYS = (VOLUME_UP_KEY, VOLUME_DOWN_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +204,37 @@ def change_brightness(step, direction):
     return False
 
 
+def change_volume(step, direction):
+    """Increase or decrease volume by ``step`` percent."""
+    sign = "+" if direction > 0 else "-"
+    
+    # Prefer PulseAudio/PipeWire via pactl
+    try:
+        result = subprocess.run(
+            ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{sign}{step}%"],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return True
+    except FileNotFoundError:
+        pass
+
+    # Fallback to ALSA amixer
+    try:
+        result = subprocess.run(
+            ["amixer", "-D", "pulse", "sset", "Master", f"{step}%{sign}"],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return True
+    except FileNotFoundError:
+        pass
+
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Daemon
 # ---------------------------------------------------------------------------
@@ -212,7 +249,7 @@ def find_devices():
                 continue
             caps = dev.capabilities(verbose=False)
             keys = caps.get(evdev.ecodes.EV_KEY, [])
-            if UP_KEY in keys or DOWN_KEY in keys:
+            if UP_KEY in keys or DOWN_KEY in keys or VOLUME_UP_KEY in keys or VOLUME_DOWN_KEY in keys:
                 devices.append(dev)
         except PermissionError:
             pass
@@ -281,8 +318,8 @@ def run_daemon():
         print(f"Failed to initialize devices: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    last_press = {UP_KEY: 0.0, DOWN_KEY: 0.0}
-    press_count = {UP_KEY: 0, DOWN_KEY: 0}
+    last_press = {UP_KEY: 0.0, DOWN_KEY: 0.0, VOLUME_UP_KEY: 0.0, VOLUME_DOWN_KEY: 0.0}
+    press_count = {UP_KEY: 0, DOWN_KEY: 0, VOLUME_UP_KEY: 0, VOLUME_DOWN_KEY: 0}
     held = {}  # (dev.path, code) -> {"due": ms, "kernel_repeat": bool}
     repeat_delay_ms = 400
     repeat_interval_ms = 40
@@ -294,12 +331,23 @@ def run_daemon():
             press_count[code] = 0
         press_count[code] += 1
         last_press[code] = now
-        step = min(
-            config["base_step"] * press_count[code],
-            config["max_step"],
-        )
-        direction = 1 if code == UP_KEY else -1
-        change_brightness(step, direction)
+
+        if code in BRIGHTNESS_KEYS:
+            # Apply acceleration only if enabled for brightness
+            if config.get("brightness_acceleration", True):
+                step = min(config["base_step"] * press_count[code], config["max_step"])
+            else:
+                step = config["base_step"]
+            direction = 1 if code == UP_KEY else -1
+            change_brightness(step, direction)
+        elif code in SOUND_KEYS:
+            # Apply acceleration only if enabled for sound
+            if config.get("sound_acceleration", False):
+                step = min(config["base_step"] * press_count[code], config["max_step"])
+            else:
+                step = config["base_step"]
+            direction = 1 if code == VOLUME_UP_KEY else -1
+            change_volume(step, direction)
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.write_text(str(os.getpid()))
@@ -319,7 +367,7 @@ def run_daemon():
                 dev = key.fileobj
                 virtual = dev_map[dev.path]
                 for event in dev.read():
-                    if event.type == evdev.ecodes.EV_KEY and event.code in BRIGHTNESS_KEYS:
+                    if event.type == evdev.ecodes.EV_KEY and (event.code in BRIGHTNESS_KEYS or event.code in SOUND_KEYS):
                         code = event.code
                         # value 0 = key up, 1 = key down, 2 = key repeat
                         if event.value == 1:
@@ -374,7 +422,7 @@ def run_daemon():
 class AppWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
-        self.set_title("Brightness Step Accelerator")
+        self.set_title("Fn Keys Accel")
         self.set_default_size(420, 360)
         self.config = load_config()
         self._build_ui()
@@ -421,6 +469,14 @@ class AppWindow(Gtk.ApplicationWindow):
         self.hold_check.set_active(self.config.get("hold_accel", True))
         outer.append(self.hold_check)
 
+        self.brightness_accel_check = Gtk.CheckButton(label="Enable brightness acceleration")
+        self.brightness_accel_check.set_active(self.config.get("brightness_acceleration", True))
+        outer.append(self.brightness_accel_check)
+
+        self.sound_accel_check = Gtk.CheckButton(label="Enable sound acceleration")
+        self.sound_accel_check.set_active(self.config.get("sound_acceleration", False))
+        outer.append(self.sound_accel_check)
+
         autostart_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         add_btn = Gtk.Button(label="Add to startup")
         add_btn.connect("clicked", self._on_add_autostart)
@@ -457,6 +513,8 @@ class AppWindow(Gtk.ApplicationWindow):
             "max_step": int(self.max_spin.get_value()),
             "window_ms": int(self.window_spin.get_value()),
             "hold_accel": self.hold_check.get_active(),
+            "brightness_acceleration": self.brightness_accel_check.get_active(),
+            "sound_acceleration": self.sound_accel_check.get_active(),
         }
 
     def _on_save(self, _btn):
@@ -478,7 +536,7 @@ class AppWindow(Gtk.ApplicationWindow):
         AUTOSTART_FILE.write_text(
             "[Desktop Entry]\n"
             "Type=Application\n"
-            "Name=Brightness Step Accelerator\n"
+            "Name=Fn Keys Accel\n"
             f"Exec={sys.executable} {Path(__file__).resolve()} --daemon\n"
             "Hidden=false\n"
             "NoDisplay=false\n"
@@ -534,7 +592,7 @@ class AppWindow(Gtk.ApplicationWindow):
 
 class BrightnessApp(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="org.github.brightness_step_accel")
+        super().__init__(application_id="org.github.fn_keys_accel")
 
     def do_activate(self):
         win = self.get_active_window()
